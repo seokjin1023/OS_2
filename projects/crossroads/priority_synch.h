@@ -1,51 +1,47 @@
-#ifndef THREADS_SYNCH_H
-#define THREADS_SYNCH_H
+#ifndef PROJECTS_CROSSROADS_PRIORITY_SYNCH_H
+#define PROJECTS_CROSSROADS_PRIORITY_SYNCH_H
 
 #include <list.h>
 #include <stdbool.h>
+#include "threads/thread.h"
 
-/* A counting semaphore. */
-struct semaphore
+/* A counting semaphore with priority. */
+struct priority_semaphore
 {
-  unsigned value;      /* Current value. */
-  struct list waiters; /* List of waiting threads. */
+  unsigned value;
+  struct list waiters; /* List of waiting threads */
 };
 
-void sema_init(struct semaphore *, unsigned value);
-void sema_down(struct semaphore *);
-bool sema_try_down(struct semaphore *);
-void sema_up(struct semaphore *);
-void sema_self_test(void);
+void priority_sema_init(struct priority_semaphore *, unsigned value);
+void priority_sema_down(struct priority_semaphore *);
+bool priority_sema_try_down(struct priority_semaphore *);
+void priority_sema_up(struct priority_semaphore *);
+void priority_sema_self_test(void);
 
-/* Lock. */
-struct lock
+/* Priority Lock */
+struct priority_lock
 {
-  struct thread *holder;      /* Thread holding lock (for debugging). */
-  struct semaphore semaphore; /* Binary semaphore controlling access. */
+  struct thread *holder;
+  struct priority_semaphore semaphore;
 };
 
-void lock_init(struct lock *);
-void lock_acquire(struct lock *);
-bool lock_try_acquire(struct lock *);
-void lock_release(struct lock *);
-bool lock_held_by_current_thread(const struct lock *);
+void priority_lock_init(struct priority_lock *);
+void priority_lock_acquire(struct priority_lock *);
+bool priority_lock_try_acquire(struct priority_lock *);
+void priority_lock_release(struct priority_lock *);
+bool priority_lock_held_by_current_thread(const struct priority_lock *);
 
-/* Condition variable. */
-struct condition
+/* Priority Condition */
+struct priority_condition
 {
-  struct list waiters; /* List of waiting threads. */
+  struct list waiters;
 };
 
-void cond_init(struct condition *);
-void cond_wait(struct condition *, struct lock *);
-void cond_signal(struct condition *, struct lock *);
-void cond_broadcast(struct condition *, struct lock *);
+void priority_cond_init(struct priority_condition *);
+void priority_cond_wait(struct priority_condition *, struct priority_lock *);
+void priority_cond_signal(struct priority_condition *, struct priority_lock *);
+void priority_cond_broadcast(struct priority_condition *, struct priority_lock *);
 
-/* Optimization barrier.
+#define priority_barrier() asm volatile("" : : : "memory")
 
-   The compiler will not reorder operations across an
-   optimization barrier.  See "Optimization Barriers" in the
-   reference guide for more information.*/
-#define barrier() asm volatile("" : : : "memory")
-
-#endif /* threads/synch.h */
+#endif /* PROJECTS_CROSSROADS_PRIORITY_SYNCH_H */
