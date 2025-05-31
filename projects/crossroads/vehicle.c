@@ -246,7 +246,7 @@ void parse_vehicles(struct vehicle_info *vehicle_info, char *input)
         }
         else
         {
-            // 길이가 3보다 큰 경우: 구문 예) "fAB5.12"
+            // 길이가 3보다 큰 경우: "fAB5.12"
             // type은 구급차(AMBULANCE)
             vehicle_info[idx].type = VEHICL_TYPE_AMBULANCE;
 
