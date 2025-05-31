@@ -4,9 +4,16 @@
 
 #include "threads/thread.h"
 #include "threads/synch.h"
+#include "projects/crossroads/priority_synch.h"
 #include "projects/crossroads/vehicle.h"
 #include "projects/crossroads/map.h"
 #include "projects/crossroads/ats.h"
+#include "projects/crossroads/crossroads.h"
+
+static struct lock step_lock;
+static struct condition step_cond;
+static int vehicle_waiting;
+static int vehicle_total; // init_on_mainthread 등에서 설정
 
 /* path. A:0 B:1 C:2 D:3 */
 const struct position vehicle_path[4][4][12] = {
@@ -314,21 +321,33 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
     {
         /* start this vehicle */
         vi->state = VEHICLE_STATUS_RUNNING;
+        vi->position = pos_next;
     }
     else
     {
         /* release current position */
         lock_release(&vi->map_locks[pos_cur.row][pos_cur.col]);
+        vi->position = pos_next;
     }
-    /* update position */
-    vi->position = pos_next;
-
+    printf("vehicle %c moved to (%d, %d)\n", vi->id, vi->position.row, vi->position.col);
     return 1;
 }
 
 void init_on_mainthread(int thread_cnt)
 {
     /* Called once before spawning threads */
+    lock_init(&step_lock);
+    vehicle_total = thread_cnt;
+    vehicle_waiting = 0;
+    cond_init(&step_cond);
+}
+
+int caculate_priority_for_vehicle(struct vehicle_info *vi)
+{
+    if (vi->type == VEHICL_TYPE_AMBULANCE)
+        return 1000 + vi->golden_time - vi->arrival;
+    else
+        return 100 + vi->arrival;
 }
 
 void vehicle_loop(void *_vi)
@@ -344,6 +363,9 @@ void vehicle_loop(void *_vi)
     vi->position.row = vi->position.col = -1;
     vi->state = VEHICLE_STATUS_READY;
 
+    // 우선순위를 설정해 AMBULANCE 차량이 먼저 이동할 수 있도록 설정
+    thread_set_priority(caculate_priority_for_vehicle(vi));
+
     step = 0;
     while (1)
     {
@@ -357,11 +379,31 @@ void vehicle_loop(void *_vi)
         /* termination condition. */
         if (res == 0)
         {
+            lock_acquire(&step_lock);
+            vehicle_total--;
+            unitstep_changed();
+            lock_release(&step_lock);
             break;
         }
 
         /* unitstep change! */
-        unitstep_changed();
+        lock_acquire(&step_lock);
+        vehicle_waiting++;
+
+        if (vehicle_waiting == vehicle_total)
+        {
+            crossroads_step++;
+            vehicle_waiting = 0;
+            cond_broadcast(&step_cond, &step_lock);
+            unitstep_changed();
+        }
+        else
+        {
+            while (crossroads_step == step) // 다른 차량이 step 증가할 때까지 대기
+                cond_wait(&step_cond, &step_lock);
+        }
+
+        lock_release(&step_lock);
     }
 
     /* status transition must happen before sema_up */
