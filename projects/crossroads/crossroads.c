@@ -104,46 +104,46 @@ void run_crossroads(char **argv)
     parse_vehicles(vehicle_info, argv[1]);
     check_parse_vehicles(vehicle_info, thread_cnt);
 
-    // 	for (i=0; i<thread_cnt; i++) {
-    // 		/* put map locks */
-    // 		vehicle_info[i].map_locks = map_locks;
-    // 	}
+    for (i=0; i<thread_cnt; i++) {
+        /* put map locks */
+        vehicle_info[i].map_locks = map_locks;
+    }
 
-    // 	init_on_mainthread(thread_cnt);
+    init_on_mainthread(thread_cnt);
 
-    // 	blinkers = malloc(sizeof(struct blinker_info) * NUM_BLINKER);
-    // 	init_blinker(blinkers, map_locks, vehicle_info);
+    blinkers = malloc(sizeof(struct blinker_info) * NUM_BLINKER);
+    init_blinker(blinkers, map_locks, vehicle_info);
 
-    // 	/* prepare threads for each vehicle */
-    // 	printf("initializing vehicle threads...\n");
-    // 	for (i=0; i<thread_cnt; i++) {
-    // 		char name[16];
-    // 		snprintf(name, sizeof name, "thread %c", vehicle_info[i].id);
-    // 		thread_create(name, PRI_DEFAULT, vehicle_loop, &vehicle_info[i]);
-    // 	}
-    // 	start_blinker();
+    /* prepare threads for each vehicle */
+    printf("initializing vehicle threads...\n");
+    for (i=0; i<thread_cnt; i++) {
+        char name[16];
+        snprintf(name, sizeof name, "thread %c", vehicle_info[i].id);
+        thread_create(name, PRI_DEFAULT, vehicle_loop, &vehicle_info[i]);
+    }
+    start_blinker();
 
-    // 	printf("running project2 crossroads ...\n");
+    printf("running project2 crossroads ...\n");
 
-    // #if 1
-    // 	/* main loop */
-    // 	do {
-    // 		map_draw();
-    // 		for (i=0; i<thread_cnt; i++) {
-    // 			map_draw_vehicle(vehicle_info[i].id,
-    // 							vehicle_info[i].position.row,
-    // 							vehicle_info[i].position.col);
-    // 		}
-    // 		/* sleep */
-    // 		timer_msleep(1000);
-    // 	} while (is_finished(vehicle_info, thread_cnt));
+#if 1
+    /* main loop */
+    do {
+        map_draw();
+        for (i=0; i<thread_cnt; i++) {
+            map_draw_vehicle(vehicle_info[i].id,
+                            vehicle_info[i].position.row,
+                            vehicle_info[i].position.col);
+        }
+        /* sleep */
+        timer_msleep(1000);
+    } while (is_finished(vehicle_info, thread_cnt));
 
-    // 	/* dealloc */
-    // 	map_draw_reset();
-    // 	printf("finished. releasing resources ...\n");
-    // 	release_map_locks(map_locks);
-    // 	free(vehicle_info);
-    // 	free(blinkers);
-    // 	printf("good bye.\n");
-    // #endif
+    /* dealloc */
+    map_draw_reset();
+    printf("finished. releasing resources ...\n");
+    release_map_locks(map_locks);
+    free(vehicle_info);
+    free(blinkers);
+    printf("good bye.\n");
+#endif
 }

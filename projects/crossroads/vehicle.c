@@ -321,6 +321,7 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
     {
         /* start this vehicle */
         vi->state = VEHICLE_STATUS_RUNNING;
+        vehicle_total++;
         vi->position = pos_next;
     }
     else
@@ -329,7 +330,6 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
         lock_release(&vi->map_locks[pos_cur.row][pos_cur.col]);
         vi->position = pos_next;
     }
-    printf("vehicle %c moved to (%d, %d)\n", vi->id, vi->position.row, vi->position.col);
     return 1;
 }
 
@@ -337,7 +337,7 @@ void init_on_mainthread(int thread_cnt)
 {
     /* Called once before spawning threads */
     lock_init(&step_lock);
-    vehicle_total = thread_cnt;
+    vehicle_total = 0;
     vehicle_waiting = 0;
     cond_init(&step_cond);
 }
@@ -354,6 +354,7 @@ void vehicle_loop(void *_vi)
 {
     int res;
     int start, dest, step;
+    int start_step = -1;
 
     struct vehicle_info *vi = _vi;
 
@@ -373,6 +374,8 @@ void vehicle_loop(void *_vi)
         res = try_move(start, dest, step, vi);
         if (res == 1)
         {
+            if (start_step == -1)
+                start_step = crossroads_step;
             step++;
         }
 
@@ -381,7 +384,6 @@ void vehicle_loop(void *_vi)
         {
             lock_acquire(&step_lock);
             vehicle_total--;
-            unitstep_changed();
             lock_release(&step_lock);
             break;
         }
@@ -399,7 +401,7 @@ void vehicle_loop(void *_vi)
         }
         else
         {
-            while (crossroads_step == step) // 다른 차량이 step 증가할 때까지 대기
+            while (crossroads_step - start_step < step) // 다른 차량이 step 증가할 때까지 대기
                 cond_wait(&step_cond, &step_lock);
         }
 
