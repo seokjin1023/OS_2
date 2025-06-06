@@ -34,22 +34,20 @@ void blinker_thread(void *arg)
 
     while (true)
     {
+        lock_acquire(&is_green_lock);
         /* 1) 해당 셀이 비었는지(lock_try_acquire 성공 여부 확인) */
         if (lock_try_acquire(&map_locks[row][col]))
         {
             /* 락을 단기간 빌려온 뒤, 곧바로 release → “지금 비어 있다” 표시 */
-            lock_acquire(&is_green_lock);
             is_green[id] = 1;
-            lock_release(&is_green_lock);
             lock_release(&map_locks[row][col]);
         }
         else
         {
             /* 락을 못 잡았다는 것은 “차가 이미 있다” → 적색(signal off) */
-            lock_acquire(&is_green_lock);
             is_green[id] = 0;
-            lock_release(&is_green_lock);
         }
+        lock_release(&is_green_lock);
 
         /*
          * (필수) CPU 점유를 조금이라도 완화하기 위해 즉시 yield.
