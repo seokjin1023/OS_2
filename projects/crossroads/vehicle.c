@@ -510,8 +510,29 @@ void vehicle_loop(void *_vi)
     int start_step = -1;
     step = 0;
 
+    if (vi->type == VEHICL_TYPE_AMBULANCE)
+        thread_yield();
+
     while (1)
     {
+        // AMBULANE 차량일 때만 적용됨 - 이유: vi-arrival이 일반차량의 경우 0임.
+        lock_acquire(&step_lock);
+        while (crossroads_step < vi->arrival)
+        {
+            // 남은 차량 중에 정상 차량(normal)이 한 대라도 있다면
+            // 전역 스텝이 vi->arrival까지 올라올 때까지 기다린다.
+            if (vehicle_total > 0)
+            {
+                cond_wait(&step_cond, &step_lock);
+            }
+            else
+            {
+                // 정상 차량이 하나도 없는 상태(AMBULANCE만 남았을 때)
+                // → 전역 스텝을 강제로 올려 준다.
+                crossroads_step++;
+            }
+        }
+        lock_release(&step_lock);
         // ─────────────────────────────────────────────────────
         // (A) try_move 호출 (한 번만 시도)
         res = try_move(start, dest, step, vi);
