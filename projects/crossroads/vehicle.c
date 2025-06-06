@@ -425,7 +425,10 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
         // 만약 교차로 외부일 경우
         if (!is_in_intersection(pos_next.row, pos_next.col))
         {
-            lock_acquire(&vi->map_locks[pos_next.row][pos_next.col]);
+            if (!lock_try_acquire(&vi->map_locks[pos_next.row][pos_next.col])) {
+                /* 셀이 아직 다른 차가 점유 중이라면 이동 실패(-1) */
+                return -1;
+            }
             if (vi->state == VEHICLE_STATUS_READY)
             {
                 /* start this vehicle */
