@@ -370,6 +370,11 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
     /* 교차로에 진입하는 순간일 경우 */
     if (is_entry_cell(vi, pos_next))
     {
+        for (int i = 0; i < 2; i++)
+        {
+            if (thread_get_priority() < 1000)
+                thread_yield();
+        }
         priority_lock_acquire(&blinker_lock);
         // blinker에게는 한 vehicle이 접근해서 모두 확인해봐야함.
         struct position to_acquire[12];
@@ -491,9 +496,9 @@ void init_on_mainthread(int thread_cnt)
 int caculate_priority_for_vehicle(struct vehicle_info *vi)
 {
     if (vi->type == VEHICL_TYPE_AMBULANCE)
-        return 1000 + vi->golden_time - vi->arrival;
+        return 1001;
     else
-        return 100 + vi->arrival;
+        return 100;
 }
 
 void vehicle_loop(void *_vi)
@@ -507,14 +512,21 @@ void vehicle_loop(void *_vi)
 
     vi->position.row = vi->position.col = -1;
     vi->state = VEHICLE_STATUS_READY;
-    int start_step = -1;
     step = 0;
+
+    thread_set_priority(caculate_priority_for_vehicle(vi));
 
     if (vi->type == VEHICL_TYPE_AMBULANCE)
         thread_yield();
 
     while (1)
     {
+        if (thread_get_priority() < 1000)
+        {
+            if (!is_exit_cell(vi, vi->position))
+                thread_yield();
+        }
+
         // AMBULANE 차량일 때만 적용됨 - 이유: vi-arrival이 일반차량의 경우 0임.
         lock_acquire(&step_lock);
         while (crossroads_step < vi->arrival)
@@ -539,8 +551,6 @@ void vehicle_loop(void *_vi)
 
         if (res == 1)
         {
-            if (start_step == -1)
-                start_step = crossroads_step + 1;
             // 이동 성공 → 내 step을 1 올린다.
             step++;
         }
@@ -579,15 +589,14 @@ void vehicle_loop(void *_vi)
         }
         else
         {
+            int my_step = crossroads_step;
             // 아직 다 모이지 않았으면, “전역 스텝이 내 step까지 올라오면” 빠져나간다
-            while (crossroads_step < start_step)
+            while (crossroads_step == my_step)
             {
                 cond_wait(&step_cond, &step_lock);
             }
         }
         lock_release(&step_lock);
-
-        start_step++;
         thread_yield();
     }
 
