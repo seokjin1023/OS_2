@@ -500,43 +500,38 @@ void vehicle_loop(void *_vi)
 {
     int res;
     int start, dest, step;
-    int start_step = -1;
 
     struct vehicle_info *vi = _vi;
-
     start = vi->start - 'A';
     dest = vi->dest - 'A';
 
     vi->position.row = vi->position.col = -1;
     vi->state = VEHICLE_STATUS_READY;
-
-    // 우선순위를 설정해 AMBULANCE 차량이 먼저 이동할 수 있도록 설정
-    // thread_set_priority(caculate_priority_for_vehicle(vi));
-
+    int start_step = -1;
     step = 0;
+
     while (1)
     {
-        // 1) barrier 입구: “글로벌 스텝이 아직 나보다 작다면 기다려라”
-        // lock_acquire(&step_lock);
-        // while (crossroads_step < step)
-        // {
-        //     cond_wait(&step_cond, &step_lock);
-        // }
-        // lock_release(&step_lock);
-
-        // 2) try_move 한 번만 호출 (이동 시도)
+        // ─────────────────────────────────────────────────────
+        // (A) try_move 호출 (한 번만 시도)
         res = try_move(start, dest, step, vi);
 
         if (res == 1)
         {
+            if (start_step == -1)
+                start_step = crossroads_step + 1;
             // 이동 성공 → 내 step을 1 올린다.
             step++;
         }
         else if (res == 0)
         {
-            // 종료 지점 도달 → 차량 종료
+            // 종료 지점에 도달 → 종료하되, Barrier 퇴장에도 반드시 참여
             lock_acquire(&step_lock);
+
+            // total 차량 수 감소
             vehicle_total--;
+
+            // 남은 차량이 전부 모였으면, 전역 스텝 1 올리고 broadcast
             if (vehicle_waiting == vehicle_total)
             {
                 crossroads_step++;
@@ -545,15 +540,17 @@ void vehicle_loop(void *_vi)
                 unitstep_changed();
             }
             lock_release(&step_lock);
-            break;
+            break; // 스레드 종료
         }
-        // else res == -1 (이동 실패) → step은 그대로
+        // else res == -1 (이동 실패) → step 그대로
 
-        // 3) barrier 진입: “이번 스텝 시도(이동 혹은 실패) 완료” 알림
+        // ─────────────────────────────────────────────────────
+        // (B) Barrier 퇴장: “이번 스텝 시도 완료” 알리기
         lock_acquire(&step_lock);
         vehicle_waiting++;
         if (vehicle_waiting == vehicle_total)
         {
+            // 모든 차량이 이번 스텝을 마쳤으면 전역 스텝++ & broadcast
             crossroads_step++;
             vehicle_waiting = 0;
             cond_broadcast(&step_cond, &step_lock);
@@ -561,15 +558,18 @@ void vehicle_loop(void *_vi)
         }
         else
         {
-            while (crossroads_step < step + 1)
+            // 아직 다 모이지 않았으면, “전역 스텝이 내 step까지 올라오면” 빠져나간다
+            while (crossroads_step < start_step)
             {
                 cond_wait(&step_cond, &step_lock);
             }
         }
         lock_release(&step_lock);
+
+        start_step++;
         thread_yield();
     }
 
-    /* status transition must happen before sema_up */
+    // status transition
     vi->state = VEHICLE_STATUS_FINISHED;
 }
