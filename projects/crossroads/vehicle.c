@@ -372,7 +372,7 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
     {
         for (int i = 0; i < 2; i++)
         {
-            if (thread_get_priority() < 1000)
+            if (thread_get_priority() < PRI_DEFAULT)
                 thread_yield();
         }
         priority_lock_acquire(&blinker_lock);
@@ -496,9 +496,9 @@ void init_on_mainthread(int thread_cnt)
 int caculate_priority_for_vehicle(struct vehicle_info *vi)
 {
     if (vi->type == VEHICL_TYPE_AMBULANCE)
-        return 1001;
+        return PRI_DEFAULT + 1;
     else
-        return 100;
+        return PRI_DEFAULT - 1;
 }
 
 void vehicle_loop(void *_vi)
@@ -521,12 +521,6 @@ void vehicle_loop(void *_vi)
 
     while (1)
     {
-        if (thread_get_priority() < 1000)
-        {
-            if (!is_exit_cell(vi, vi->position))
-                thread_yield();
-        }
-
         // AMBULANE 차량일 때만 적용됨 - 이유: vi-arrival이 일반차량의 경우 0임.
         lock_acquire(&step_lock);
         while (crossroads_step < vi->arrival)
