@@ -1,86 +1,64 @@
-
-#include <list.h>
-#include "threads/thread.h"
-#include "threads/synch.h"
+#include <stdio.h>
 #include "projects/crossroads/blinker.h"
+#include "threads/thread.h"
 #include "projects/crossroads/vehicle.h"
-#include "projects/crossroads/position.h"
-#include "projects/crossroads/priority_synch.h"
 
 struct blinker_info *blinker;
-struct vehicle_info *vehicles;
+struct lock is_green_lock;
+// 이걸 통해 확인
+int is_green[NUM_BLINKER] = {1, 1, 1, 1};
 
-struct priority_semaphore v_sema;
-struct lock blinker_lock;
-/*
-교차로 진입을 위한 차들을 관리하는 semaphore 하나
-각 blinker가 중앙 semaphore를 조회하고 각자 판단 후 entry 허용
-- lock을 통해서 진입 가능한지 확인할 예정임.
-*/
-
-struct position blinker_cell[4] = {
-    {2, 2}, {2, 4}, {4, 4}, {4, 2}
-};
+const struct position blinker_cell[4] = {
+    {2, 2}, {2, 4}, {4, 4}, {4, 2}};
 
 void init_blinker(struct blinker_info *blinkers, struct lock **map_locks, struct vehicle_info *vehicle_info)
 {
     for (int i = 0; i < NUM_BLINKER; i++)
     {
-        sema_init(&blinkers->blinker_sema);
+        blinkers[i].map_locks = map_locks;
+        blinkers[i].vehicle_info = vehicle_info;
     }
-    priority_sema_init(&v_sema, 4);
-    lock_init(&blinker_lock);
-    vehicles = vehicle_info;
     blinker = blinkers;
+    lock_init(&is_green_lock);
 }
 
-//본인 담당 구역만 맞는지 확인
-bool can_enter_partial(struct vehicle_info *vi, int blinker_id) {
-    int start = vi->start - 'A';
-    int dest = vi->dest - 'A';
-    int blinker_row = blinker_cell[blinker_id].row;
-    int blinker_col = blinker_cell[blinker_id].col;
-    for(int i = 0; i < 12; i++) {
-        if(blinker_row == vehicle_path[start][dest][i].row 
-            && blinker_col == vehicle_path[start][dest][i].col) {
-            //check can get lock
-        }
-    }
-    return true;
-}
-
-void blinker_thread(void *arg) {
+void blinker_thread(void *arg)
+{
     int id = (int)arg;
-    
-    while (true) {
-        lock_acquire(&blinker_lock);
+    struct blinker_info *b = &blinker[id];
+    struct lock **map_locks = b->map_locks;
 
-        struct list_elem *e = list_begin(&v_sema.waiters);
-        while (e != list_end(&v_sema.waiters)) {
-            struct vehicle_info *vi = list_entry(e, struct vehicle_info, elem);
+    /* 이 블링커가 담당하는 단일 셀 좌표 */
+    int row = blinker_cell[id].row;
+    int col = blinker_cell[id].col;
 
-            if (vi->being_considered)
-                goto next;
-
-            if (can_enter_partial(vi, id)) {
-                vi->passed_blinkers++;
-                if (vi->passed_blinkers == NUM_BLINKER) {
-                    vi->being_considered = true;
-                    acquire_all_locks(vi);
-                    list_remove(e);
-                    thread_unblock(vi->t);
-                }
-            }
-
-        next:
-            e = list_next(e);
+    while (true)
+    {
+        /* 1) 해당 셀이 비었는지(lock_try_acquire 성공 여부 확인) */
+        if (lock_try_acquire(&map_locks[row][col]))
+        {
+            /* 락을 단기간 빌려온 뒤, 곧바로 release → “지금 비어 있다” 표시 */
+            lock_acquire(&is_green_lock);
+            is_green[id] = 1;
+            lock_release(&is_green_lock);
+            lock_release(&map_locks[row][col]);
+        }
+        else
+        {
+            /* 락을 못 잡았다는 것은 “차가 이미 있다” → 적색(signal off) */
+            lock_acquire(&is_green_lock);
+            is_green[id] = 0;
+            lock_release(&is_green_lock);
         }
 
-        lock_release(&blinker_lock);
+        /*
+         * (필수) CPU 점유를 조금이라도 완화하기 위해 즉시 yield.
+         * 임의의 msleep은 발생시키지 않습니다.
+         */
         thread_yield();
     }
 }
-void start_blinker()
+void start_blinker(void)
 {
     for (int i = 0; i < NUM_BLINKER; i++)
     {

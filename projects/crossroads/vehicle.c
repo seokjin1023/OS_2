@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <string.h>
 
@@ -9,16 +8,13 @@
 #include "projects/crossroads/map.h"
 #include "projects/crossroads/ats.h"
 #include "projects/crossroads/crossroads.h"
+#include "projects/crossroads/blinker.h"
 
 static struct lock step_lock;
-static struct lock blinker_lock;
+static struct priority_lock blinker_lock;
 static struct condition step_cond;
 static int vehicle_waiting;
 static int vehicle_total; // init_on_mainthread 등에서 설정
-
-struct position blinker_cell[4] = {
-    {2, 2}, {2, 4}, {4, 4}, {4, 2}
-};
 
 /* path. A:0 B:1 C:2 D:3 */
 const struct position vehicle_path[4][4][12] = {
@@ -216,6 +212,23 @@ const struct position vehicle_path[4][4][12] = {
                       {-1, -1},
                   }}};
 
+static int is_position_outside(struct position pos)
+{
+    return (pos.row == -1 || pos.col == -1);
+}
+
+static bool is_in_intersection(int row, int col)
+{
+    return (row >= 2 && row <= 4 && col >= 2 && col <= 4);
+}
+
+static bool is_entry_cell(struct vehicle_info *vi, struct position pos)
+{
+    if (pos.row == vi->crossroads_entry_point.row && pos.col == vi->crossroads_entry_point.col)
+        return true;
+    return false;
+}
+
 void parse_vehicles(struct vehicle_info *vehicle_info, char *input)
 {
     int thread_cnt = 1;
@@ -291,39 +304,27 @@ void parse_vehicles(struct vehicle_info *vehicle_info, char *input)
 
         /*여기부터 4번 요구사항 충족을 위함*/
         int start = vehicle_info[idx].start - 'A';
-        int dest  = vehicle_info[idx].dest  - 'A';
-        /* 최대 NUM_BLINKER 개 intersection 셀만 모으면 된다. */
-        vehicle_info[idx].needed_locks = malloc(sizeof(struct position) * 4);
-        vehicle_info[idx].needed_lock_cnt = 0;
-        for (int b = 0; b < 4; b++) {
-            /* blinker_cell[b] 위치가 경로에 있는지 확인 */
-            for (int step = 0; vehicle_path[start][dest][step].row != -1; step++) {
-                if (blinker_cell[b].row == vehicle_path[start][dest][step].row &&
-                    blinker_cell[b].col == vehicle_path[start][dest][step].col) {
-                    //만약 blinker_cell위치 (꼭짓점이라면면)
-                    struct position location;
-                    location.row = blinker_cell[b].row;
-                    location.col = blinker_cell[b].col;
-                    vehicle_info[idx].needed_locks[vehicle_info[idx].needed_lock_cnt++] = location;
-                    break;
-                }
-            }
-        }
-        for(int step = 0; vehicle_path[start][dest][step].row != -1; step++) {
+        int dest = vehicle_info[idx].dest - 'A';
+        for (int step = 0; vehicle_path[start][dest][step].row != -1; step++)
+        {
             bool find_entry_point = false;
             bool find_exit_point = false;
-            if(find_exit_point)
+            if (find_exit_point)
                 break;
-            if(!find_entry_point) {
-                if(is_in_intersection(vehicle_path[start][dest][step].row, vehicle_path[start][dest][step].col)) {
+            if (!find_entry_point)
+            {
+                if (is_in_intersection(vehicle_path[start][dest][step].row, vehicle_path[start][dest][step].col))
+                {
                     vehicle_info[idx].crossroads_entry_point.row = vehicle_path[start][dest][step].row;
                     vehicle_info[idx].crossroads_entry_point.col = vehicle_path[start][dest][step].col;
                     find_entry_point = true;
                     break;
                 }
             }
-            if(find_entry_point) {
-                if(!is_in_intersection(vehicle_path[start][dest][step].row, vehicle_path[start][dest][step].col)) {
+            if (find_entry_point)
+            {
+                if (!is_in_intersection(vehicle_path[start][dest][step].row, vehicle_path[start][dest][step].col))
+                {
                     vehicle_info[idx].crossroads_exit_point.row = vehicle_path[start][dest][step].row;
                     vehicle_info[idx].crossroads_exit_point.col = vehicle_path[start][dest][step].col;
                     find_exit_point = true;
@@ -335,22 +336,6 @@ void parse_vehicles(struct vehicle_info *vehicle_info, char *input)
         // 다음 토큰으로 이동
         token = strtok_r(NULL, ":", &save_ptr);
     }
-}
-
-static int is_position_outside(struct position pos)
-{
-    return (pos.row == -1 || pos.col == -1);
-}
-
-static bool is_in_intersection(int row, int col)
-{
-    return(row >= 2 && row <= 4 && col >= 2 && col <= 4);
-}
-
-static bool is_entry_cell(struct vehicle_info *vi, struct position pos) {
-    if(pos.row == vi->crossroads_entry_point.row && pos.col == vi->crossroads_entry_point.col)
-        return true;
-    return false;
 }
 
 /* return 0:termination, 1:success, -1:fail */
@@ -375,17 +360,51 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
     }
 
     /* 교차로에 진입하는 순간일 경우 */
-    if(pos_next.row == vi->crossroads_entry_point.row && pos_next.col == vi->crossroads_entry_point.col) {
-        //blinker에게는 한 vehicle이 접근해서 모두 확인해봐야함.
-        lock_acquire(&blinker_lock);
-        //blinker등을 통해서 검사? semaphore에 집어넣기? 등등의 가능성을 열어 놓자.
-        //sema_down..?
-        //만약 잡으면 교차로내부 lock모두 잡고 이동
-        lock_release(&blinker_lock);
+    if (is_entry_cell(vi, pos_next))
+    {
+        priority_lock_acquire(&blinker_lock);
+        // blinker에게는 한 vehicle이 접근해서 모두 확인해봐야함.
+        lock_acquire(&is_green_lock);
+        bool can_enter = true;
+        for (int check = 0; vehicle_path[start][dest][check].row != -1; check++)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                if (vehicle_path[start][dest][check].row == blinker_cell[i].row &&
+                    vehicle_path[start][dest][check].col == blinker_cell[i].col)
+                {
+                    if (!is_green[i])
+                    {
+                        can_enter = false;
+                        break;
+                    }
+                }
+            }
+            if (!can_enter)
+                break;
+        }
+        lock_release(&is_green_lock);
+        if (can_enter)
+        {
+            for (int check = 0; check < 12; check++)
+            {
+                if (is_in_intersection(vehicle_path[start][dest][check].row, vehicle_path[start][dest][check].col))
+                {
+                    lock_acquire(&vi->map_locks[vehicle_path[start][dest][check].row][vehicle_path[start][dest][check].col]);
+                }
+            }
+            lock_release(&vi->map_locks[pos_cur.row][pos_cur.col]);
+            vi->position = pos_next;
+        }
+
+        priority_lock_release(&blinker_lock);
+        return 1;
     }
-    else {
-        //만약 교차로 외부일 경우
-        if(!is_in_intersection(pos_next.row, pos_next.col)) {
+    else
+    {
+        // 만약 교차로 외부일 경우
+        if (!is_in_intersection(pos_next.row, pos_next.col))
+        {
             lock_acquire(&vi->map_locks[pos_next.row][pos_next.col]);
             if (vi->state == VEHICLE_STATUS_READY)
             {
@@ -397,21 +416,26 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
             else
             {
                 /* 만약 교차로를 나가는 시점이라면 교차로 내부 lock모두 해제해야함.*/
-                if(pos_next.row == vi->crossroads_exit_point.row && pos_next.col == vi->crossroads_exit_point.col) {
-                    for(int check = 0; check < 12; check++) {
-                        if(is_in_intersection(vehicle_path[start][dest][check].row, vehicle_path[start][dest][check].col)) {
+                if (pos_next.row == vi->crossroads_exit_point.row && pos_next.col == vi->crossroads_exit_point.col)
+                {
+                    for (int check = 0; check < 12; check++)
+                    {
+                        if (is_in_intersection(vehicle_path[start][dest][check].row, vehicle_path[start][dest][check].col))
+                        {
                             lock_release(&vi->map_locks[vehicle_path[start][dest][check].row][vehicle_path[start][dest][check].col]);
                         }
                     }
                 }
                 /* release current position */
-                else {
+                else
+                {
                     lock_release(&vi->map_locks[pos_cur.row][pos_cur.col]);
                 }
                 vi->position = pos_next;
             }
         }
-        else {
+        else
+        {
             vi->position = pos_next;
         }
         return 1;
@@ -422,7 +446,7 @@ void init_on_mainthread(int thread_cnt)
 {
     /* Called once before spawning threads */
     lock_init(&step_lock);
-    lock_init(&blinker_lock);
+    priority_lock_init(&blinker_lock);
     vehicle_total = 0;
     vehicle_waiting = 0;
     cond_init(&step_cond);
