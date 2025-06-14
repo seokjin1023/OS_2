@@ -370,11 +370,10 @@ static int try_move(int start, int dest, int step, struct vehicle_info *vi)
     /* 교차로에 진입하는 순간일 경우 */
     if (is_entry_cell(vi, pos_next))
     {
-        for (int i = 0; i < 2; i++)
-        {
-            if (thread_get_priority() < PRI_DEFAULT)
-                thread_yield();
-        }
+        if (thread_get_priority() == PRI_MIN || thread_get_priority() == PRI_MAX - 1)
+            thread_yield();
+        if (thread_get_priority() == PRI_MIN)
+            thread_yield();
         priority_lock_acquire(&blinker_lock);
         // blinker에게는 한 vehicle이 접근해서 모두 확인해봐야함.
         struct position to_acquire[12];
@@ -496,9 +495,9 @@ void init_on_mainthread(int thread_cnt)
 int caculate_priority_for_vehicle(struct vehicle_info *vi)
 {
     if (vi->type == VEHICL_TYPE_AMBULANCE)
-        return PRI_DEFAULT + 1;
+        return PRI_MAX - 1;
     else
-        return PRI_DEFAULT - 1;
+        return PRI_MIN;
 }
 
 void vehicle_loop(void *_vi)
@@ -521,6 +520,12 @@ void vehicle_loop(void *_vi)
 
     while (1)
     {
+        if (thread_get_priority() == PRI_MIN)
+        {
+            if (!is_exit_cell(vi, vi->position))
+                thread_yield();
+        }
+
         // AMBULANE 차량일 때만 적용됨 - 이유: vi-arrival이 일반차량의 경우 0임.
         lock_acquire(&step_lock);
         while (crossroads_step < vi->arrival)
@@ -536,6 +541,7 @@ void vehicle_loop(void *_vi)
                 // 정상 차량이 하나도 없는 상태(AMBULANCE만 남았을 때)
                 // → 전역 스텝을 강제로 올려 준다.
                 crossroads_step++;
+                unitstep_changed();
             }
         }
         lock_release(&step_lock);
@@ -547,6 +553,10 @@ void vehicle_loop(void *_vi)
         {
             // 이동 성공 → 내 step을 1 올린다.
             step++;
+            if (is_exit_cell(vi, vehicle_path[start][dest][step]))
+            {
+                thread_set_priority(PRI_MAX);
+            }
         }
         else if (res == 0)
         {
@@ -591,7 +601,6 @@ void vehicle_loop(void *_vi)
             }
         }
         lock_release(&step_lock);
-        thread_yield();
     }
 
     // status transition
